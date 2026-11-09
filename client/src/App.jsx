@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import './index.css'
 
-const API = import.meta.env.VITE_API || 'http://localhost:5000'
+const API = import.meta.env.VITE_API || 'https://omni-join-api.onrender.com'
 async function api(path, method = 'GET', body) {
   const r = await fetch(API + '/api' + path, {
     method,
