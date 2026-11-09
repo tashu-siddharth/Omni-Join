@@ -123,6 +123,23 @@ function Handover({ pid, tick }) {
     </div></div>)
 }
 
+function Upload({ pid, onAdded }) {
+  const [msg, setMsg] = useState('')
+  const pick = async e => {
+    const file = e.target.files[0]; if (!file) return
+    setMsg('Reading with AI... wait 10-20 seconds')
+    const text = await file.text()
+    try {
+      const d = await api(`/projects/${pid}/extract`, 'POST', { filename: file.name, text })
+      setMsg(`Extracted ${d.added} items (${d.verified} verified against the file). Check the review tab.`)
+      onAdded()
+    } catch (err) { setMsg('Error: ' + err.message) }
+    e.target.value = ''
+  }
+  return (<div className="card"><b>Upload a project file (.txt, .md, .csv)</b><br />
+    <input type="file" accept=".txt,.md,.csv" onChange={pick} /><p>{msg}</p></div>)
+}
+
 export default function App() {
   const [role, setRole] = useState(null)
   const [projects, setProjects] = useState([])
@@ -157,7 +174,7 @@ export default function App() {
       {role === 'owner' && <div className="tabs">
         {['capture', 'review', 'handover'].map(t =>
           <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t}</button>)}</div>}
-      {pid && tab === 'capture' && role === 'owner' && <Capture pid={pid} onAdded={refresh} />}
+     {pid && tab === 'capture' && role === 'owner' && <><Upload pid={pid} onAdded={refresh} /><Capture pid={pid} onAdded={refresh} /></>}
       {pid && tab === 'review' && role === 'owner' && <Review pid={pid} refresh={refresh} tick={tick} />}
       {pid && tab === 'handover' && <Handover pid={pid} tick={tick} />}
     </div>)

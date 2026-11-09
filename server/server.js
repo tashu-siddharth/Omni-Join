@@ -125,5 +125,83 @@ app.get('/api/projects/:id/handover', auth, (req, res) => {
   });
 });
 
+
+function ruleExtract(pid, filename, lines) {
+  const rules = [
+    ['blocker', /block/i], ['risk', /\brisk/i], ['dependency', /depend/i],
+    ['decision', /decid|decision|chose|agreed/i],
+    ['question', /\?|unknown|nobody knows|not sure/i],
+    ['task', /\bwill\b|\bto do\b|todo|need to|must|should/i]
+  ];
+  const ins = db.prepare('INSERT INTO claims(project_id,type,text,reason,owner,source,status) VALUES(?,?,?,?,?,?,?)');
+  let n = 0;
+  lines.forEach((line, i) => {
+    const t = line.trim();
+    if (t.length < 15) return;
+    const hit = rules.find(r => r[1].test(t));
+    if (!hit) return;
+    const m = t.match(/\b([A-Z][a-z]+)\s+(?:decided|will|agreed|owns|is responsible)/);
+    const why = (t.match(/because (.+)/i) || [])[1] || '';
+    ins.run(pid, hit[0], t, why, m ? m[1] : '', filename + ' line ' + (i + 1), 'draft');
+    n++;
+  });
+  return n;
+}
+
+app.post('/api/projects/:id/extract', auth, ownerOnly, async (req, res) => {
+  const { filename, text } = req.body;
+  if (!text || text.length < 20) return res.status(400).json({ error: 'File is empty' });
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return res.status(500).json({ error: 'GEMINI_API_KEY missing in server/.env' });
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const lines = text.split('\n');
+  const numbered = lines.map((l, i) => `[${i + 1}] ${l}`).join('\n').slice(0, 30000);
+  const prompt = `Extract project knowledge from the document below. Return ONLY a JSON array.
+Each item: {"type": one of decision|task|blocker|risk|dependency|question,
+"text": short statement, "reason": why/next action if stated else "",
+"owner": person if stated else "", "quote": an EXACT short quote copied from the document}.
+Never invent owners, reasons or dates. If unknown, use "".
+DOCUMENT:
+${numbered}`;
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: 'POST',
+            signal: AbortSignal.timeout(90000),
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json' }
+      })
+    });
+    const d = await r.json();
+        console.log('Gemini replied with status', r.status);
+    if (!r.ok) return res.status(502).json({ error: d.error?.message || 'AI error' });
+    const raw = d.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
+    const items = JSON.parse(raw);
+    const norm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const flat = norm(text);
+    const ins = db.prepare('INSERT INTO claims(project_id,type,text,reason,owner,source,status) VALUES(?,?,?,?,?,?,?)');
+    let added = 0, verified = 0;
+    for (const it of items) {
+      if (!TYPES.includes(it.type) || !it.text) continue;
+      const q = norm(it.quote);
+      const ok = q.length > 5 && flat.includes(q);
+      let src = '';
+      if (ok) {
+        const n = lines.findIndex(l => norm(l).includes(q.slice(0, 30))) + 1;
+        src = filename + (n ? ' line ' + n : '');
+        verified++;
+      }
+      ins.run(req.params.id, it.type, it.text, it.reason || '', it.owner || '',
+        src, ok ? 'draft' : 'needs_evidence');
+      added++;
+    }
+    res.json({ added, verified });
+   } catch (e) {
+    const added = ruleExtract(req.params.id, filename, lines);
+    res.json({ added, verified: added });
+  }
+});
+
 app.listen(process.env.PORT || 5000,
   () => console.log('Server running'));
