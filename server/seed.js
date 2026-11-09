@@ -1,0 +1,15 @@
+const db = require('./db');
+const bcrypt = require('bcryptjs');
+const h = bcrypt.hashSync('demo1234', 10);
+db.prepare("INSERT OR IGNORE INTO users(name,email,password_hash,role) VALUES('Demo Owner','owner@demo.com',?, 'owner')").run(h);
+db.prepare("INSERT OR IGNORE INTO users(name,email,password_hash,role) VALUES('New Member','new@demo.com',?, 'incoming')").run(h);
+const p = db.prepare("INSERT INTO projects(name,owner_id) VALUES('Campus Placement Portal',1)").run().lastInsertRowid;
+const add = db.prepare('INSERT INTO claims(project_id,type,text,reason,owner,source) VALUES(?,?,?,?,?,?)');
+add.run(p,'decision','Use MySQL for the database','Team already knew SQL','Rahul','meeting-notes.pdf p.2');
+add.run(p,'decision','Use JWT for login','','Rahul','');
+add.run(p,'task','Finish resume-analysis API','','Rahul','tasks.csv row 4');
+add.run(p,'task','Write deployment guide','','','');
+add.run(p,'task','Fix student dashboard bug','','Rahul','tasks.csv row 7');
+add.run(p,'blocker','Resume parser fails on scanned PDFs','','','bugs.md');
+add.run(p,'dependency','Dashboard depends on backend API','','Rahul','README.md');
+console.log('Seeded');

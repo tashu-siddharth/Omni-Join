@@ -42,5 +42,88 @@ app.post('/api/login', (req, res) => {
 
 app.get('/api/me', auth, (req, res) => res.json(req.user));
 
+const TYPES = ['decision','task','blocker','risk','dependency','question'];
+const STATUSES = ['draft','needs_evidence','reviewed','approved','rejected'];
+
+function ownerOnly(req, res, next) {
+  if (req.user.role !== 'owner')
+    return res.status(403).json({ error: 'Owner access only' });
+  next();
+}
+
+// Knowledge Continuity Check (rule-based, no AI)
+function flagsFor(c, all) {
+  const f = [];
+  if (!c.source || c.source === '') f.push('Evidence missing');
+  if (['task','blocker'].includes(c.type) && !c.owner)
+    f.push('No confirmed owner');
+  if (c.type === 'decision' && !c.reason)
+    f.push('Decision has no recorded reason');
+  if (c.type === 'blocker' && !c.reason)
+    f.push('Blocker has no next action');
+  if (c.owner) {
+    const n = all.filter(x => x.owner === c.owner &&
+      ['task','blocker','dependency'].includes(x.type) &&
+      x.status !== 'rejected').length;
+    if (n >= 3) f.push('Single-owner risk: ' + c.owner + ' holds ' + n + ' items');
+  }
+  return f;
+}
+
+app.post('/api/projects', auth, ownerOnly, (req, res) => {
+  const r = db.prepare('INSERT INTO projects(name,owner_id) VALUES(?,?)')
+    .run(req.body.name || 'Untitled project', req.user.id);
+  res.json({ id: r.lastInsertRowid, name: req.body.name });
+});
+
+app.get('/api/projects', auth, (req, res) =>
+  res.json(db.prepare('SELECT * FROM projects').all()));
+
+app.post('/api/projects/:id/claims', auth, ownerOnly, (req, res) => {
+  const { type, text, reason, owner, source } = req.body;
+  if (!TYPES.includes(type) || !text)
+    return res.status(400).json({ error: 'Type and text required' });
+  const r = db.prepare(
+    'INSERT INTO claims(project_id,type,text,reason,owner,source) VALUES(?,?,?,?,?,?)'
+  ).run(req.params.id, type, text, reason || '', owner || '',
+        source || 'Manual entry by ' + req.user.id);
+  res.json({ id: r.lastInsertRowid });
+});
+
+app.get('/api/projects/:id/claims', auth, ownerOnly, (req, res) => {
+  const all = db.prepare('SELECT * FROM claims WHERE project_id=? ORDER BY id DESC')
+    .all(req.params.id);
+  res.json(all.map(c => ({ ...c, flags: flagsFor(c, all) })));
+});
+
+app.patch('/api/claims/:id', auth, ownerOnly, (req, res) => {
+  const c = db.prepare('SELECT * FROM claims WHERE id=?').get(req.params.id);
+  if (!c) return res.status(404).json({ error: 'Not found' });
+  const b = req.body;
+  const status = STATUSES.includes(b.status) ? b.status : c.status;
+  db.prepare('UPDATE claims SET text=?,reason=?,owner=?,source=?,status=? WHERE id=?')
+    .run(b.text ?? c.text, b.reason ?? c.reason, b.owner ?? c.owner,
+         b.source ?? c.source, status, c.id);
+  res.json({ ok: true });
+});
+
+// Incoming members only ever see APPROVED claims
+app.get('/api/projects/:id/handover', auth, (req, res) => {
+  const p = db.prepare('SELECT * FROM projects WHERE id=?').get(req.params.id);
+  const all = db.prepare("SELECT id,type,text,reason,owner,source FROM claims WHERE project_id=? AND status='approved'")
+    .all(req.params.id);
+  const by = t => all.filter(c => c.type === t);
+  res.json({
+    project: p,
+    decisions: by('decision'), tasks: by('task'), blockers: by('blocker'),
+    risks: by('risk'), dependencies: by('dependency'), questions: by('question'),
+    first72h: {
+      '0-24h': ['Get access to project files', 'Read decisions and their reasons', 'Meet the outgoing member or lead'],
+      '24-48h': by('blocker').concat(by('question')).map(c => 'Resolve: ' + c.text),
+      '48-72h': by('task').map(c => 'Take over: ' + c.text + (c.owner ? ' (owner: ' + c.owner + ')' : ' (owner not confirmed)'))
+    }
+  });
+});
+
 app.listen(process.env.PORT || 5000,
   () => console.log('Server running'));
