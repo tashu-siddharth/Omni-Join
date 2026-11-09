@@ -4,6 +4,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('./db');
+if (db.prepare('SELECT COUNT(*) c FROM users').get().c === 0) require('./seed');
 
 const app = express();
 app.use(cors());
