@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import './index.css'
 
-const API = import.meta.env.VITE_API || 'http://localhost:5000'
+const API = import.meta.env.VITE_API || 'https://omni-join-api.onrender.com'
 async function api(path, method = 'GET', body) {
   const r = await fetch(API + '/api' + path, {
     method,
@@ -140,6 +140,58 @@ function Upload({ pid, onAdded }) {
     <input type="file" accept=".txt,.md,.csv" onChange={pick} /><p>{msg}</p></div>)
 }
 
+function Handover2({ pid, tick }) {
+  const [h, setH] = useState(null)
+  useEffect(() => { api(`/projects/${pid}/handover`).then(setH) }, [pid, tick])
+  if (!h) return <p>Loading…</p>
+  const s = h.stats || { total: 0, approved: 0, flagged: 0, percent: 0 }
+  const color = s.percent >= 70 ? '#1e8e4e' : s.percent >= 40 ? '#d98c00' : '#c0392b'
+  const verdict = s.percent >= 70 ? 'Safe to take over' : s.percent >= 40 ? 'Take over with care' : 'High risk: talk to the previous owner first'
+  const owners = {}
+  ;[...h.tasks, ...h.blockers, ...h.dependencies].forEach(c => {
+    const k = c.owner || 'Unassigned'
+    owners[k] = (owners[k] || 0) + 1
+  })
+  const Box = ({ label, n, bg }) => (
+    <div style={{ flex: 1, minWidth: 110, background: bg, borderRadius: 10, padding: 12, textAlign: 'center' }}>
+      <div style={{ fontSize: 26, fontWeight: 700 }}>{n}</div><small>{label}</small></div>)
+  const Sec = ({ title, items }) => (
+    <div className="card"><b>{title}</b>
+      {items.length ? items.map(c => (
+        <p key={c.id}>• {c.text}<br />
+          <small>Why: {c.reason || 'not recorded'} | Owner: {c.owner || 'not confirmed'} | Source: {c.source || 'none'}</small></p>
+      )) : <p><small>Nothing approved yet.</small></p>}</div>)
+  return (<div>
+    <div className="card" style={{ borderLeft: '8px solid ' + color }}>
+      <small>HANDOVER READINESS</small>
+      <div style={{ fontSize: 40, fontWeight: 800, color }}>{s.percent}%</div>
+      <b>{verdict}</b><br />
+      <small>{s.approved} of {s.total} captured items are verified by a reviewer. {s.flagged} still have knowledge gaps.</small>
+    </div>
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <Box label="Decisions" n={h.decisions.length} bg="#e6ecff" />
+      <Box label="Unfinished" n={h.tasks.length} bg="#fff3d6" />
+      <Box label="Blockers" n={h.blockers.length} bg="#ffe3e0" />
+      <Box label="Risks" n={h.risks.length} bg="#ffe3e0" />
+    </div>
+    <div className="card"><b>Who owns what</b>
+      {Object.entries(owners).map(([k, v]) => (
+        <p key={k}>{k}: {v} item(s) {k === 'Unassigned' && <span className="flag">⚠ nobody owns these</span>}
+          {v >= 3 && k !== 'Unassigned' && <span className="flag">⚠ single-owner risk</span>}</p>))}
+      {!Object.keys(owners).length && <small>No approved ownership yet.</small>}</div>
+    <Sec title="Decisions already taken" items={h.decisions} />
+    <Sec title="Unfinished work" items={h.tasks} />
+    <Sec title="Blockers" items={h.blockers} />
+    <Sec title="Risks" items={h.risks} />
+    <Sec title="Dependencies" items={h.dependencies} />
+    <Sec title="Open questions" items={h.questions} />
+    <div className="card"><b>First 72 hours</b>
+      {Object.entries(h.first72h).map(([k, v]) => (
+        <div key={k}><b>{k}</b>{v.map((x, i) =>
+          <div key={i}><label><input type="checkbox" style={{ width: 'auto' }} /> {x}</label></div>)}</div>))}
+    </div></div>)
+}
+
 export default function App() {
   const [role, setRole] = useState(null)
   const [projects, setProjects] = useState([])
@@ -176,6 +228,6 @@ export default function App() {
           <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{t}</button>)}</div>}
      {pid && tab === 'capture' && role === 'owner' && <><Upload pid={pid} onAdded={refresh} /><Capture pid={pid} onAdded={refresh} /></>}
       {pid && tab === 'review' && role === 'owner' && <Review pid={pid} refresh={refresh} tick={tick} />}
-      {pid && tab === 'handover' && <Handover pid={pid} tick={tick} />}
+      {pid && tab === 'handover' && <Handover2 pid={pid} tick={tick} />}
     </div>)
 }

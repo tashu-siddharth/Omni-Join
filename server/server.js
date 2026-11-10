@@ -116,6 +116,13 @@ app.get('/api/projects/:id/handover', auth, (req, res) => {
   const by = t => all.filter(c => c.type === t);
   res.json({
     project: p,
+        stats: (() => {
+      const rows = db.prepare('SELECT * FROM claims WHERE project_id=? AND status!=?').all(req.params.id, 'rejected');
+      const ok = rows.filter(c => c.status === 'approved').length;
+      const risky = rows.filter(c => flagsFor(c, rows).length > 0).length;
+      return { total: rows.length, approved: ok, flagged: risky,
+               percent: rows.length ? Math.round((ok / rows.length) * 100) : 0 };
+    })(),
     decisions: by('decision'), tasks: by('task'), blockers: by('blocker'),
     risks: by('risk'), dependencies: by('dependency'), questions: by('question'),
     first72h: {
